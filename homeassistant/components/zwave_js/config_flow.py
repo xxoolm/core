@@ -335,7 +335,7 @@ class BaseZwaveJSFlow(FlowHandler):
         return discovery_info_config
 
 
-class ConfigFlow(config_entries.ConfigFlow, BaseZwaveJSFlow, domain=DOMAIN):
+class ConfigFlow(BaseZwaveJSFlow, config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Z-Wave JS."""
 
     VERSION = 1
