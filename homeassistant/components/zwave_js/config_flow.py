@@ -79,6 +79,7 @@ class BaseZwaveJSFlow(FlowHandler):
         self.network_key: str | None = None
         self.usb_path: str | None = None
         self.ws_address: str | None = None
+        self.restart_addon: bool = False
         # If we install the add-on we should uninstall it on entry remove.
         self.integration_created_addon = False
         self.install_task: asyncio.Task | None = None
@@ -128,6 +129,7 @@ class BaseZwaveJSFlow(FlowHandler):
             }
 
             if new_addon_config != addon_config:
+                self.restart_addon = True
                 await self._async_set_addon_config(new_addon_config)
 
             return await self.async_step_start_addon()
@@ -174,8 +176,11 @@ class BaseZwaveJSFlow(FlowHandler):
         """Start the Z-Wave JS add-on."""
         addon_manager: AddonManager = get_addon_manager(self.hass)
         try:
-            if self._async_is_addon_running():
+            is_addon_running = self._async_is_addon_running()
+            if is_addon_running and self.restart_addon:
                 await addon_manager.async_schedule_restart_addon()
+            elif is_addon_running:
+                return
             else:
                 await addon_manager.async_schedule_start_addon()
             # Sleep some seconds to let the add-on start properly before connecting.
