@@ -335,6 +335,7 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
             # if the controller is reconfigured in a manual step.
             self._async_update_entry(
                 {
+                    **self.config_entry.data,
                     **user_input,
                     CONF_USE_ADDON: False,
                     CONF_INTEGRATION_CREATED_ADDON: False,
@@ -388,6 +389,7 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
 
         self._async_update_entry(
             {
+                **self.config_entry.data,
                 CONF_URL: self.ws_address,
                 CONF_USB_PATH: self.usb_path,
                 CONF_NETWORK_KEY: self.network_key,
