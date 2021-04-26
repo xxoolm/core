@@ -47,6 +47,12 @@ def get_manual_schema(user_input: dict[str, Any]) -> vol.Schema:
     return vol.Schema({vol.Required(CONF_URL, default=default_url): str})
 
 
+def get_on_supervisor_schema(user_input: dict[str, Any]) -> vol.Schema:
+    """Return a schema for the on Supervisor step."""
+    default_use_addon = user_input.get(CONF_USE_ADDON, True)
+    return vol.Schema({vol.Optional(CONF_USE_ADDON, default=default_use_addon): bool})
+
+
 async def validate_input(hass: HomeAssistant, user_input: dict) -> VersionInfo:
     """Validate if the user input allows us to connect."""
     ws_address = user_input[CONF_URL]
@@ -347,7 +353,10 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
         """Handle logic when on Supervisor host."""
         if user_input is None:
             return self.async_show_form(
-                step_id="on_supervisor", data_schema=ON_SUPERVISOR_SCHEMA
+                step_id="on_supervisor",
+                data_schema=get_on_supervisor_schema(
+                    {CONF_USE_ADDON: self.config_entry.data[CONF_USE_ADDON]}
+                ),
             )
         if not user_input[CONF_USE_ADDON]:
             return await self.async_step_manual()
