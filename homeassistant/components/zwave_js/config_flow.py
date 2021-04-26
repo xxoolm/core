@@ -71,57 +71,6 @@ async def async_get_version_info(hass: HomeAssistant, ws_address: str) -> Versio
     return version_info
 
 
-class OptionsFlowHandler(config_entries.OptionsFlow):
-    """Handle an options flow for Z-Wave JS."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Set up the options flow."""
-        self.config_entry = config_entry
-
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Manage the options."""
-        if user_input is not None:
-            use_addon = user_input.get(CONF_USE_ADDON)
-
-            if not use_addon:
-                user_input[CONF_INTEGRATION_CREATED_ADDON] = False
-
-            self.hass.config_entries.async_update_entry(
-                self.config_entry, data={**self.config_entry.data, **user_input}
-            )
-            return self.async_create_entry(title="", data={})
-
-        schema: dict = {
-            vol.Required(
-                CONF_URL,
-                default=self.config_entry.data[CONF_URL],
-            ): str
-        }
-
-        use_addon = self.config_entry.data.get(CONF_USE_ADDON)
-
-        if use_addon:
-            schema[vol.Required(CONF_USE_ADDON, default=use_addon)] = bool
-            schema[
-                vol.Required(
-                    CONF_USB_PATH, default=self.config_entry.data[CONF_USB_PATH]
-                )
-            ] = str
-            schema[
-                vol.Required(
-                    CONF_NETWORK_KEY, default=self.config_entry.data[CONF_NETWORK_KEY]
-                )
-            ] = str
-            schema.pop(CONF_URL)
-
-        return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(schema),
-        )
-
-
 class BaseZwaveJSFlow(FlowHandler):
     """Represent the base config flow for Z-Wave JS."""
 
@@ -129,26 +78,11 @@ class BaseZwaveJSFlow(FlowHandler):
         """Set up flow instance."""
         self.network_key: str | None = None
         self.usb_path: str | None = None
-        self.use_addon = False
         self.ws_address: str | None = None
         # If we install the add-on we should uninstall it on entry remove.
         self.integration_created_addon = False
         self.install_task: asyncio.Task | None = None
         self.start_task: asyncio.Task | None = None
-
-    @callback
-    def _async_create_entry_from_vars(self) -> FlowResult:
-        """Return a config entry for the flow."""
-        return self.async_create_entry(
-            title=TITLE,
-            data={
-                CONF_URL: self.ws_address,
-                CONF_USB_PATH: self.usb_path,
-                CONF_NETWORK_KEY: self.network_key,
-                CONF_USE_ADDON: self.use_addon,
-                CONF_INTEGRATION_CREATED_ADDON: self.integration_created_addon,
-            },
-        )
 
     async def async_step_install_addon(
         self, user_input: dict[str, Any] | None = None
@@ -240,7 +174,10 @@ class BaseZwaveJSFlow(FlowHandler):
         """Start the Z-Wave JS add-on."""
         addon_manager: AddonManager = get_addon_manager(self.hass)
         try:
-            await addon_manager.async_schedule_start_addon()
+            if self._async_is_addon_running():
+                await addon_manager.async_schedule_restart_addon()
+            else:
+                await addon_manager.async_schedule_start_addon()
             # Sleep some seconds to let the add-on start properly before connecting.
             for _ in range(ADDON_SETUP_TIMEOUT_ROUNDS):
                 await asyncio.sleep(ADDON_SETUP_TIMEOUT)
@@ -335,10 +272,123 @@ class BaseZwaveJSFlow(FlowHandler):
         return discovery_info_config
 
 
+class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
+    """Handle an options flow for Z-Wave JS."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Set up the options flow."""
+        super().__init__()
+        self.config_entry = config_entry
+
+    @callback
+    def _async_update_entry(self, data: dict[str, Any]) -> None:
+        """Update the config entry with new data."""
+        self.hass.config_entries.async_update_entry(self.config_entry, data=data)
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage the options."""
+        if is_hassio(self.hass):
+            return await self.async_step_on_supervisor()
+
+        return await self.async_step_manual()
+
+    async def async_step_manual(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle a manual configuration."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="manual", data_schema=STEP_USER_DATA_SCHEMA
+            )
+
+        errors = {}
+
+        try:
+            version_info = await validate_input(self.hass, user_input)
+        except InvalidInput as err:
+            errors["base"] = err.error
+        except Exception:  # pylint: disable=broad-except
+            _LOGGER.exception("Unexpected exception")
+            errors["base"] = "unknown"
+        else:
+            if self.config_entry.unique_id != version_info.home_id:
+                return self.async_abort(reason="different_device")
+
+            # Make sure we disable any add-on handling
+            # if the controller is reconfigured in a manual step.
+            self._async_update_entry(
+                {
+                    **user_input,
+                    CONF_USE_ADDON: False,
+                    CONF_INTEGRATION_CREATED_ADDON: False,
+                }
+            )
+
+            return self.async_create_entry(title=TITLE, data={})
+
+        return self.async_show_form(
+            step_id="manual", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+        )
+
+    async def async_step_on_supervisor(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle logic when on Supervisor host."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="on_supervisor", data_schema=ON_SUPERVISOR_SCHEMA
+            )
+        if not user_input[CONF_USE_ADDON]:
+            return await self.async_step_manual()
+
+        if not await self._async_is_addon_installed():
+            return await self.async_step_install_addon()
+
+        return await self.async_step_configure_addon()
+
+    async def async_step_finish_addon_setup(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Prepare info needed to complete the config entry update.
+
+        Get add-on discovery info and server version info.
+        Check for same unique id and abort if not the same unique id.
+        """
+        if not self.ws_address:
+            discovery_info = await self._async_get_addon_discovery_info()
+            self.ws_address = f"ws://{discovery_info['host']}:{discovery_info['port']}"
+
+        try:
+            version_info = await async_get_version_info(self.hass, self.ws_address)
+        except CannotConnect:
+            return self.async_abort(reason="cannot_connect")
+
+        if self.config_entry.unique_id != version_info.home_id:
+            return self.async_abort(reason="different_device")
+
+        self._async_update_entry(
+            {
+                CONF_URL: self.ws_address,
+                CONF_USB_PATH: self.usb_path,
+                CONF_NETWORK_KEY: self.network_key,
+                CONF_USE_ADDON: True,
+                CONF_INTEGRATION_CREATED_ADDON: self.integration_created_addon,
+            }
+        )
+        return self.async_create_entry(title=TITLE, data={})
+
+
 class ConfigFlow(BaseZwaveJSFlow, config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Z-Wave JS."""
 
     VERSION = 1
+
+    def __init__(self) -> None:
+        """Set up flow instance."""
+        super().__init__()
+        self.use_addon = False
 
     @staticmethod
     @callback
@@ -475,6 +525,20 @@ class ConfigFlow(BaseZwaveJSFlow, config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
         return self._async_create_entry_from_vars()
+
+    @callback
+    def _async_create_entry_from_vars(self) -> FlowResult:
+        """Return a config entry for the flow."""
+        return self.async_create_entry(
+            title=TITLE,
+            data={
+                CONF_URL: self.ws_address,
+                CONF_USB_PATH: self.usb_path,
+                CONF_NETWORK_KEY: self.network_key,
+                CONF_USE_ADDON: self.use_addon,
+                CONF_INTEGRATION_CREATED_ADDON: self.integration_created_addon,
+            },
+        )
 
 
 class CannotConnect(exceptions.HomeAssistantError):
