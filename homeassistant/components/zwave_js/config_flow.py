@@ -39,7 +39,12 @@ ADDON_SETUP_TIMEOUT_ROUNDS = 4
 SERVER_VERSION_TIMEOUT = 10
 
 ON_SUPERVISOR_SCHEMA = vol.Schema({vol.Optional(CONF_USE_ADDON, default=True): bool})
-STEP_USER_DATA_SCHEMA = vol.Schema({vol.Required(CONF_URL, default=DEFAULT_URL): str})
+
+
+def get_manual_schema(user_input: dict[str, Any]) -> vol.Schema:
+    """Return a schema for the manual step."""
+    default_url = user_input.get(CONF_URL, DEFAULT_URL)
+    return vol.Schema({vol.Required(CONF_URL, default=default_url): str})
 
 
 async def validate_input(hass: HomeAssistant, user_input: dict) -> VersionInfo:
@@ -117,8 +122,6 @@ class BaseZwaveJSFlow(FlowHandler):
         """Ask for config for Z-Wave JS add-on."""
         addon_config = await self._async_get_addon_config()
 
-        errors: dict[str, str] = {}
-
         if user_input is not None:
             self.network_key = user_input[CONF_NETWORK_KEY]
             self.usb_path = user_input[CONF_USB_PATH]
@@ -144,9 +147,7 @@ class BaseZwaveJSFlow(FlowHandler):
             }
         )
 
-        return self.async_show_form(
-            step_id="configure_addon", data_schema=data_schema, errors=errors
-        )
+        return self.async_show_form(step_id="configure_addon", data_schema=data_schema)
 
     async def async_step_start_addon(
         self, user_input: dict[str, Any] | None = None
@@ -305,7 +306,10 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
         """Handle a manual configuration."""
         if user_input is None:
             return self.async_show_form(
-                step_id="manual", data_schema=STEP_USER_DATA_SCHEMA
+                step_id="manual",
+                data_schema=get_manual_schema(
+                    {CONF_URL: self.config_entry.data[CONF_URL]}
+                ),
             )
 
         errors = {}
@@ -334,7 +338,7 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
             return self.async_create_entry(title=TITLE, data={})
 
         return self.async_show_form(
-            step_id="manual", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+            step_id="manual", data_schema=get_manual_schema(user_input), errors=errors
         )
 
     async def async_step_on_supervisor(
@@ -418,7 +422,7 @@ class ConfigFlow(BaseZwaveJSFlow, config_entries.ConfigFlow, domain=DOMAIN):
         """Handle a manual configuration."""
         if user_input is None:
             return self.async_show_form(
-                step_id="manual", data_schema=STEP_USER_DATA_SCHEMA
+                step_id="manual", data_schema=get_manual_schema({})
             )
 
         errors = {}
@@ -447,7 +451,7 @@ class ConfigFlow(BaseZwaveJSFlow, config_entries.ConfigFlow, domain=DOMAIN):
             return self._async_create_entry_from_vars()
 
         return self.async_show_form(
-            step_id="manual", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+            step_id="manual", data_schema=get_manual_schema(user_input), errors=errors
         )
 
     async def async_step_hassio(self, discovery_info: dict[str, Any]) -> FlowResult:
