@@ -15,7 +15,12 @@ from homeassistant import config_entries, exceptions
 from homeassistant.components.hassio import is_hassio
 from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import AbortFlow, FlowHandler, FlowResult
+from homeassistant.data_entry_flow import (
+    AbortFlow,
+    FlowHandler,
+    FlowManager,
+    FlowResult,
+)
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .addon import AddonError, AddonManager, get_addon_manager
@@ -95,6 +100,11 @@ class BaseZwaveJSFlow(FlowHandler):
         self.integration_created_addon = False
         self.install_task: asyncio.Task | None = None
         self.start_task: asyncio.Task | None = None
+
+    @property
+    @abstractmethod
+    def flow_manager(args) -> FlowManager:
+        """Return the flow manager of the flow."""
 
     async def async_step_install_addon(
         self, user_input: dict[str, Any] | None = None
@@ -214,7 +224,7 @@ class BaseZwaveJSFlow(FlowHandler):
         finally:
             # Continue the flow after show progress when the task is done.
             self.hass.async_create_task(
-                self.hass.config_entries.flow.async_configure(flow_id=self.flow_id)
+                self.flow_manager.async_configure(flow_id=self.flow_id)
             )
 
     @abstractmethod
@@ -270,7 +280,7 @@ class BaseZwaveJSFlow(FlowHandler):
         finally:
             # Continue the flow after show progress when the task is done.
             self.hass.async_create_task(
-                self.hass.config_entries.flow.async_configure(flow_id=self.flow_id)
+                self.flow_manager.async_configure(flow_id=self.flow_id)
             )
 
     async def _async_get_addon_discovery_info(self) -> dict:
@@ -292,6 +302,11 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
         """Set up the options flow."""
         super().__init__()
         self.config_entry = config_entry
+
+    @property
+    def flow_manager(self) -> config_entries.OptionsFlowManager:
+        """Return the correct flow manager."""
+        return self.hass.config_entries.options
 
     @callback
     def _async_update_entry(self, data: dict[str, Any]) -> None:
@@ -410,6 +425,11 @@ class ConfigFlow(BaseZwaveJSFlow, config_entries.ConfigFlow, domain=DOMAIN):
         """Set up flow instance."""
         super().__init__()
         self.use_addon = False
+
+    @property
+    def flow_manager(self) -> config_entries.ConfigEntriesFlowManager:
+        """Return the correct flow manager."""
+        return self.hass.config_entries.flow
 
     @staticmethod
     @callback
