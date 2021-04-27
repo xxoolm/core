@@ -133,6 +133,7 @@ class BaseZwaveJSFlow(FlowHandler):
             self.usb_path = user_input[CONF_USB_PATH]
 
             new_addon_config = {
+                **addon_config,
                 CONF_ADDON_DEVICE: self.usb_path,
                 CONF_ADDON_NETWORK_KEY: self.network_key,
             }
