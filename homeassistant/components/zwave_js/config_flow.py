@@ -168,7 +168,7 @@ class BaseZwaveJSFlow(FlowHandler):
 
         try:
             await self.start_task
-        except (CannotConnect, AddonError) as err:
+        except (CannotConnect, AddonError, AbortFlow) as err:
             _LOGGER.error(err)
             return self.async_show_progress_done(next_step_id="start_failed")
 
@@ -184,7 +184,7 @@ class BaseZwaveJSFlow(FlowHandler):
         """Start the Z-Wave JS add-on."""
         addon_manager: AddonManager = get_addon_manager(self.hass)
         try:
-            is_addon_running = self._async_is_addon_running()
+            is_addon_running = await self._async_is_addon_running()
             if is_addon_running and self.restart_addon:
                 await addon_manager.async_schedule_restart_addon()
             elif is_addon_running:
