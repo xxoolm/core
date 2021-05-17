@@ -453,6 +453,10 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
                 CONF_INTEGRATION_CREATED_ADDON: self.integration_created_addon,
             }
         )
+        # Always reload entry since we may have disconnected the client.
+        self.hass.async_create_task(
+            self.hass.config_entries.async_reload(self.config_entry.entry_id)
+        )
         return self.async_create_entry(title=TITLE, data={})
 
     async def async_revert_addon_config(self, reason: str) -> FlowResult:
