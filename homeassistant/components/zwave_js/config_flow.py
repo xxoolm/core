@@ -276,6 +276,8 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
         """Set up the options flow."""
         super().__init__()
         self.config_entry = config_entry
+        self.original_addon_config: dict[str, Any] | None = None
+        self.revert_reason: str | None = None
 
     @property
     def flow_manager(self) -> config_entries.OptionsFlowManager:
@@ -361,7 +363,7 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Ask for config for Z-Wave JS add-on."""
-        addon_config = await self._async_get_addon_config()
+        self.original_addon_config = addon_config = await self._async_get_addon_config()
 
         if user_input is not None:
             self.network_key = user_input[CONF_NETWORK_KEY]
@@ -408,6 +410,12 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
 
         return self.async_show_form(step_id="configure_addon", data_schema=data_schema)
 
+    async def async_step_start_failed(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Add-on start failed."""
+        return await self.async_revert_addon_config(reason="addon_start_failed")
+
     async def async_step_finish_addon_setup(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -416,6 +424,9 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
         Get add-on discovery info and server version info.
         Check for same unique id and abort if not the same unique id.
         """
+        if self.revert_reason:
+            return self.async_abort(reason=self.revert_reason)
+
         if not self.ws_address:
             discovery_info = await self._async_get_addon_discovery_info()
             self.ws_address = f"ws://{discovery_info['host']}:{discovery_info['port']}"
@@ -423,10 +434,10 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
         try:
             version_info = await async_get_version_info(self.hass, self.ws_address)
         except CannotConnect:
-            return self.async_abort(reason="cannot_connect")
+            return await self.async_revert_addon_config(reason="cannot_connect")
 
         if self.config_entry.unique_id != version_info.home_id:
-            return self.async_abort(reason="different_device")
+            return await self.async_revert_addon_config(reason="different_device")
 
         self._async_update_entry(
             {
@@ -439,6 +450,31 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
             }
         )
         return self.async_create_entry(title=TITLE, data={})
+
+    async def async_revert_addon_config(self, reason: str) -> FlowResult:
+        """Abort the options flow.
+
+        If the add-on options have been changed, revert those and restart add-on.
+        """
+        # If reverting the add-on options failed, abort immediately.
+        if self.revert_reason:
+            _LOGGER.error(
+                "Failed to revert add-on options before aborting flow, reason: %s",
+                reason,
+            )
+            return self.async_abort(reason=reason)
+
+        assert self.original_addon_config
+
+        self.revert_reason = reason
+        addon_config_input = {
+            CONF_USB_PATH: self.original_addon_config[CONF_ADDON_DEVICE],
+            CONF_NETWORK_KEY: self.original_addon_config[CONF_ADDON_DEVICE],
+            CONF_LOG_LEVEL: self.original_addon_config[CONF_ADDON_DEVICE],
+            CONF_EMULATE_HARDWARE: self.original_addon_config[CONF_ADDON_DEVICE],
+        }
+        _LOGGER.debug("Reverting add-on options, reason: %s", reason)
+        return await self.async_step_configure_addon(addon_config_input)
 
 
 class ConfigFlow(BaseZwaveJSFlow, config_entries.ConfigFlow, domain=DOMAIN):
