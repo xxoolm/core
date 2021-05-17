@@ -23,6 +23,7 @@ from homeassistant.data_entry_flow import (
 )
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from . import disconnect_client
 from .addon import AddonError, AddonManager, get_addon_manager
 from .const import (
     CONF_ADDON_DEVICE,
@@ -58,7 +59,7 @@ def get_manual_schema(user_input: dict[str, Any]) -> vol.Schema:
 
 def get_on_supervisor_schema(user_input: dict[str, Any]) -> vol.Schema:
     """Return a schema for the on Supervisor step."""
-    default_use_addon = user_input.get(CONF_USE_ADDON, True)
+    default_use_addon = user_input[CONF_USE_ADDON]
     return vol.Schema({vol.Optional(CONF_USE_ADDON, default=default_use_addon): bool})
 
 
@@ -345,7 +346,7 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
             return self.async_show_form(
                 step_id="on_supervisor",
                 data_schema=get_on_supervisor_schema(
-                    {CONF_USE_ADDON: self.config_entry.data[CONF_USE_ADDON]}
+                    {CONF_USE_ADDON: self.config_entry.data.get(CONF_USE_ADDON, True)}
                 ),
             )
         if not user_input[CONF_USE_ADDON]:
@@ -381,6 +382,13 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
             is_addon_running = await self._async_is_addon_running()
             if is_addon_running and not self.restart_addon:
                 return await self.async_step_finish_addon_setup()
+
+            if (
+                self.config_entry.data.get(CONF_USE_ADDON)
+                and self.config_entry.state == config_entries.ENTRY_STATE_LOADED
+            ):
+                # Disconnect integration before restarting add-on.
+                await disconnect_client(self.hass, self.config_entry)
 
             return await self.async_step_start_addon()
 
