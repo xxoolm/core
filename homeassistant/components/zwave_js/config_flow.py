@@ -26,6 +26,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .addon import AddonError, AddonManager, get_addon_manager
 from .const import (
     CONF_ADDON_DEVICE,
+    CONF_ADDON_EMULATE_HARDWARE,
+    CONF_ADDON_LOG_LEVEL,
     CONF_ADDON_NETWORK_KEY,
     CONF_INTEGRATION_CREATED_ADDON,
     CONF_NETWORK_KEY,
@@ -41,6 +43,8 @@ TITLE = "Z-Wave JS"
 
 ADDON_SETUP_TIMEOUT = 5
 ADDON_SETUP_TIMEOUT_ROUNDS = 4
+CONF_EMULATE_HARDWARE = "emulate_hardware"
+CONF_LOG_LEVEL = "log_level"
 SERVER_VERSION_TIMEOUT = 10
 
 ON_SUPERVISOR_SCHEMA = vol.Schema({vol.Optional(CONF_USE_ADDON, default=True): bool})
@@ -132,40 +136,6 @@ class BaseZwaveJSFlow(FlowHandler):
         """Add-on installation failed."""
         return self.async_abort(reason="addon_install_failed")
 
-    async def async_step_configure_addon(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Ask for config for Z-Wave JS add-on."""
-        addon_config = await self._async_get_addon_config()
-
-        if user_input is not None:
-            self.network_key = user_input[CONF_NETWORK_KEY]
-            self.usb_path = user_input[CONF_USB_PATH]
-
-            new_addon_config = {
-                **addon_config,
-                CONF_ADDON_DEVICE: self.usb_path,
-                CONF_ADDON_NETWORK_KEY: self.network_key,
-            }
-
-            if new_addon_config != addon_config:
-                self.restart_addon = True
-                await self._async_set_addon_config(new_addon_config)
-
-            return await self.async_step_start_addon()
-
-        usb_path = addon_config.get(CONF_ADDON_DEVICE, self.usb_path or "")
-        network_key = addon_config.get(CONF_ADDON_NETWORK_KEY, self.network_key or "")
-
-        data_schema = vol.Schema(
-            {
-                vol.Required(CONF_USB_PATH, default=usb_path): str,
-                vol.Optional(CONF_NETWORK_KEY, default=network_key): str,
-            }
-        )
-
-        return self.async_show_form(step_id="configure_addon", data_schema=data_schema)
-
     async def async_step_start_addon(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -194,11 +164,8 @@ class BaseZwaveJSFlow(FlowHandler):
         """Start the Z-Wave JS add-on."""
         addon_manager: AddonManager = get_addon_manager(self.hass)
         try:
-            is_addon_running = await self._async_is_addon_running()
-            if is_addon_running and self.restart_addon:
+            if self.restart_addon:
                 await addon_manager.async_schedule_restart_addon()
-            elif is_addon_running:
-                return
             else:
                 await addon_manager.async_schedule_start_addon()
             # Sleep some seconds to let the add-on start properly before connecting.
@@ -226,6 +193,12 @@ class BaseZwaveJSFlow(FlowHandler):
             self.hass.async_create_task(
                 self.flow_manager.async_configure(flow_id=self.flow_id)
             )
+
+    @abstractmethod
+    async def async_step_configure_addon(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Ask for config for Z-Wave JS add-on."""
 
     @abstractmethod
     async def async_step_finish_addon_setup(
@@ -383,6 +356,50 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
 
         return await self.async_step_configure_addon()
 
+    async def async_step_configure_addon(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Ask for config for Z-Wave JS add-on."""
+        addon_config = await self._async_get_addon_config()
+
+        if user_input is not None:
+            self.network_key = user_input[CONF_NETWORK_KEY]
+            self.usb_path = user_input[CONF_USB_PATH]
+
+            new_addon_config = {
+                **addon_config,
+                CONF_ADDON_DEVICE: self.usb_path,
+                CONF_ADDON_NETWORK_KEY: self.network_key,
+                CONF_ADDON_LOG_LEVEL: user_input[CONF_LOG_LEVEL],
+                CONF_ADDON_EMULATE_HARDWARE: user_input[CONF_EMULATE_HARDWARE],
+            }
+
+            if new_addon_config != addon_config:
+                self.restart_addon = True
+                await self._async_set_addon_config(new_addon_config)
+
+            is_addon_running = await self._async_is_addon_running()
+            if is_addon_running and not self.restart_addon:
+                return await self.async_step_finish_addon_setup()
+
+            return await self.async_step_start_addon()
+
+        usb_path = addon_config.get(CONF_ADDON_DEVICE, self.usb_path or "")
+        network_key = addon_config.get(CONF_ADDON_NETWORK_KEY, self.network_key or "")
+        log_level = addon_config.get(CONF_ADDON_LOG_LEVEL, "info")
+        emulate_hardware = addon_config.get(CONF_ADDON_EMULATE_HARDWARE, False)
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_USB_PATH, default=usb_path): str,
+                vol.Optional(CONF_NETWORK_KEY, default=network_key): str,
+                vol.Optional(CONF_LOG_LEVEL, default=log_level): str,
+                vol.Optional(CONF_EMULATE_HARDWARE, default=emulate_hardware): bool,
+            }
+        )
+
+        return self.async_show_form(step_id="configure_addon", data_schema=data_schema)
+
     async def async_step_finish_addon_setup(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -536,6 +553,39 @@ class ConfigFlow(BaseZwaveJSFlow, config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_configure_addon()
 
         return await self.async_step_install_addon()
+
+    async def async_step_configure_addon(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Ask for config for Z-Wave JS add-on."""
+        addon_config = await self._async_get_addon_config()
+
+        if user_input is not None:
+            self.network_key = user_input[CONF_NETWORK_KEY]
+            self.usb_path = user_input[CONF_USB_PATH]
+
+            new_addon_config = {
+                **addon_config,
+                CONF_ADDON_DEVICE: self.usb_path,
+                CONF_ADDON_NETWORK_KEY: self.network_key,
+            }
+
+            if new_addon_config != addon_config:
+                await self._async_set_addon_config(new_addon_config)
+
+            return await self.async_step_start_addon()
+
+        usb_path = addon_config.get(CONF_ADDON_DEVICE, self.usb_path or "")
+        network_key = addon_config.get(CONF_ADDON_NETWORK_KEY, self.network_key or "")
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_USB_PATH, default=usb_path): str,
+                vol.Optional(CONF_NETWORK_KEY, default=network_key): str,
+            }
+        )
+
+        return self.async_show_form(step_id="configure_addon", data_schema=data_schema)
 
     async def async_step_finish_addon_setup(
         self, user_input: dict[str, Any] | None = None

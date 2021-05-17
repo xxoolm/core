@@ -76,6 +76,8 @@
         "step": {
             "configure_addon": {
                 "data": {
+                    "emulate_hardware": "Emulate Hardware",
+                    "log_level": "Log level",
                     "network_key": "Network Key",
                     "usb_path": "USB Device Path"
                 },

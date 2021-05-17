@@ -67,7 +67,9 @@
         "title": "Enter the Z-Wave JS add-on configuration",
         "data": {
           "usb_path": "[%key:common::config_flow::data::usb_path%]",
-          "network_key": "Network Key"
+          "network_key": "Network Key",
+          "log_level": "Log level",
+          "emulate_hardware": "Emulate Hardware"
         }
       },
       "start_addon": { "title": "The Z-Wave JS add-on is starting." }
