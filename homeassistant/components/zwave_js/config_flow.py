@@ -363,7 +363,7 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Ask for config for Z-Wave JS add-on."""
-        self.original_addon_config = addon_config = await self._async_get_addon_config()
+        addon_config = await self._async_get_addon_config()
 
         if user_input is not None:
             self.network_key = user_input[CONF_NETWORK_KEY]
@@ -379,6 +379,7 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
 
             if new_addon_config != addon_config:
                 self.restart_addon = True
+                self.original_addon_config = addon_config
                 await self._async_set_addon_config(new_addon_config)
 
             is_addon_running = await self._async_is_addon_running()
@@ -425,7 +426,10 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
         Check for same unique id and abort if not the same unique id.
         """
         if self.revert_reason:
-            return self.async_abort(reason=self.revert_reason)
+            self.original_addon_config = None
+            reason = self.revert_reason
+            self.revert_reason = None
+            return self.async_abort(reason=reason)
 
         if not self.ws_address:
             discovery_info = await self._async_get_addon_discovery_info()
@@ -462,9 +466,16 @@ class OptionsFlowHandler(BaseZwaveJSFlow, config_entries.OptionsFlow):
                 "Failed to revert add-on options before aborting flow, reason: %s",
                 reason,
             )
-            return self.async_abort(reason=reason)
 
-        assert self.original_addon_config
+        if self.revert_reason or not self.original_addon_config:
+            if (
+                self.config_entry.data.get(CONF_USE_ADDON)
+                and self.config_entry.state == config_entries.ENTRY_STATE_LOADED
+            ):
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self.config_entry.entry_id)
+                )
+            return self.async_abort(reason=reason)
 
         self.revert_reason = reason
         addon_config_input = {
